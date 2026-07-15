@@ -1,32 +1,24 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import requests
+from curl_cffi import requests as cffi_requests
 from concurrent.futures import ThreadPoolExecutor
+import json
 
 app = Flask(__name__)
 CORS(app)
 
-HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-}
-
 def fetch_ticker(ticker):
-    # quoteSummary price module has preMarketPrice, postMarketPrice, marketState
-    url = f'https://query1.finance.yahoo.com/v11/finance/quoteSummary/{ticker}?modules=price'
+    url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d&includePrePost=true'
     try:
-        res = requests.get(url, headers=HEADERS, timeout=8)
+        res = cffi_requests.get(url, impersonate='chrome120', timeout=10)
         data = res.json()
-        p = data['quoteSummary']['result'][0]['price']
+        meta = data['chart']['result'][0]['meta']
         return ticker, {
-            'regularMarketPrice':    p.get('regularMarketPrice', {}).get('raw'),
-            'previousClose':         p.get('regularMarketPreviousClose', {}).get('raw'),
-            'preMarketPrice':        p.get('preMarketPrice', {}).get('raw'),
-            'preMarketChange':       p.get('preMarketChange', {}).get('raw'),
-            'preMarketChangePct':    p.get('preMarketChangePercent', {}).get('raw'),
-            'postMarketPrice':       p.get('postMarketPrice', {}).get('raw'),
-            'postMarketChange':      p.get('postMarketChange', {}).get('raw'),
-            'postMarketChangePct':   p.get('postMarketChangePercent', {}).get('raw'),
-            'marketState':           p.get('marketState'),
+            'regularMarketPrice': meta.get('regularMarketPrice'),
+            'previousClose':      meta.get('chartPreviousClose'),
+            'preMarketPrice':     meta.get('preMarketPrice'),
+            'postMarketPrice':    meta.get('postMarketPrice'),
+            'marketState':        meta.get('marketState'),
         }
     except Exception as e:
         return ticker, {'error': str(e)}
