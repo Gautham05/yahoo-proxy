@@ -60,10 +60,15 @@ def fetch_ticker(ticker):
 @app.route('/quote')
 def quote():
     tickers = [t.strip().upper() for t in request.args.get('tickers', '').split(',') if t.strip()]
-    # Use 20 workers — fetch all tickers truly in parallel
     with ThreadPoolExecutor(max_workers=20) as ex:
         results = dict(ex.map(fetch_ticker, tickers))
     return jsonify(results)
+
+# Keep-alive endpoint — pinged every 14 min by the React app
+# to prevent Render free tier from sleeping
+@app.route('/ping')
+def ping():
+    return 'ok', 200
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
