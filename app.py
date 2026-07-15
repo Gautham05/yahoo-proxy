@@ -11,17 +11,22 @@ HEADERS = {
 }
 
 def fetch_ticker(ticker):
-    url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d'
+    # quoteSummary price module has preMarketPrice, postMarketPrice, marketState
+    url = f'https://query1.finance.yahoo.com/v11/finance/quoteSummary/{ticker}?modules=price'
     try:
         res = requests.get(url, headers=HEADERS, timeout=8)
         data = res.json()
-        meta = data['chart']['result'][0]['meta']
+        p = data['quoteSummary']['result'][0]['price']
         return ticker, {
-            'regularMarketPrice':    meta.get('regularMarketPrice'),
-            'previousClose':         meta.get('chartPreviousClose'),
-            'preMarketPrice':        meta.get('preMarketPrice'),
-            'postMarketPrice':       meta.get('postMarketPrice'),
-            'marketState':           meta.get('marketState'),
+            'regularMarketPrice':    p.get('regularMarketPrice', {}).get('raw'),
+            'previousClose':         p.get('regularMarketPreviousClose', {}).get('raw'),
+            'preMarketPrice':        p.get('preMarketPrice', {}).get('raw'),
+            'preMarketChange':       p.get('preMarketChange', {}).get('raw'),
+            'preMarketChangePct':    p.get('preMarketChangePercent', {}).get('raw'),
+            'postMarketPrice':       p.get('postMarketPrice', {}).get('raw'),
+            'postMarketChange':      p.get('postMarketChange', {}).get('raw'),
+            'postMarketChangePct':   p.get('postMarketChangePercent', {}).get('raw'),
+            'marketState':           p.get('marketState'),
         }
     except Exception as e:
         return ticker, {'error': str(e)}
