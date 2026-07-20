@@ -7,6 +7,16 @@ import time
 app = Flask(__name__)
 CORS(app)
 
+GROWW_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+    'Accept': 'application/json, text/plain, */*',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Referer': 'https://groww.in/mutual-funds',
+    'X-App-Id': 'growwWeb',
+    'X-Platform': 'web',
+    'Origin': 'https://groww.in',
+}
+
 def fetch_ticker(ticker):
     url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1m&range=1d&includePrePost=true'
     try:
@@ -14,37 +24,27 @@ def fetch_ticker(ticker):
         data = res.json()
         result = data['chart']['result'][0]
         meta = result['meta']
-
         pre_start  = meta['currentTradingPeriod']['pre']['start']
         pre_end    = meta['currentTradingPeriod']['pre']['end']
         reg_start  = meta['currentTradingPeriod']['regular']['start']
         reg_end    = meta['currentTradingPeriod']['regular']['end']
         post_start = meta['currentTradingPeriod']['post']['start']
         post_end   = meta['currentTradingPeriod']['post']['end']
-
         now = int(time.time())
-        if pre_start <= now < pre_end:
-            marketState = 'PRE'
-        elif reg_start <= now < reg_end:
-            marketState = 'REGULAR'
-        elif post_start <= now < post_end:
-            marketState = 'POST'
-        else:
-            marketState = 'CLOSED'
-
+        if pre_start <= now < pre_end: marketState = 'PRE'
+        elif reg_start <= now < reg_end: marketState = 'REGULAR'
+        elif post_start <= now < post_end: marketState = 'POST'
+        else: marketState = 'CLOSED'
         timestamps = result.get('timestamp', [])
         closes = result.get('indicators', {}).get('quote', [{}])[0].get('close', [])
         candles = [(t, c) for t, c in zip(timestamps, closes) if c is not None]
-
         pre_candles  = [c for c in candles if pre_start  <= c[0] < pre_end]
         post_candles = [c for c in candles if post_start <= c[0] < post_end]
         reg_candles  = [c for c in candles if reg_start  <= c[0] < reg_end]
-
         preMarketPrice     = pre_candles[-1][1]  if pre_candles  else None
         postMarketPrice    = post_candles[-1][1] if post_candles else None
         regularMarketPrice = reg_candles[-1][1]  if reg_candles  else meta.get('regularMarketPrice')
         previousClose      = meta.get('chartPreviousClose') or meta.get('previousClose')
-
         return ticker, {
             'regularMarketPrice':  regularMarketPrice,
             'previousClose':       previousClose,
@@ -64,16 +64,6 @@ def quote():
         results = dict(ex.map(fetch_ticker, tickers))
     return jsonify(results)
 
-# Keep-alive endpoint — pinged every 14 min by the React app
-# to prevent Render free tier from sleeping
-@app.route('/ping')
-def ping():
-    return 'ok', 200
-
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
-
-
 @app.route('/groww')
 def groww():
     scheme_code = request.args.get('code')
@@ -85,12 +75,14 @@ def groww():
         fund_house = None
         page = 0
         while page <= 40:
-            r = session.get(
+            r = cffi_requests.get(
                 f'https://groww.in/v1/api/search/v3/query/filter_derived_data/st_filter?available_for_investment=true&doc_type=scheme&index=false&page={page}&plan_type=Direct&size=100&sort_by=3',
+                headers=GROWW_HEADERS,
+                impersonate='chrome120',
                 timeout=10
             )
             if r.text.startswith('<!DOCTYPE'):
-                return jsonify({'error': 'Groww blocked', 'code': 'FILTER_BLOCKED'}), 503
+                return jsonify({'error': 'Groww filter blocked', 'code': 'FILTER_BLOCKED'}), 503
             data = r.json()
             funds = data.get('content', [])
             if not funds: break
@@ -105,13 +97,18 @@ def groww():
             return jsonify({'error': 'fund not found', 'code': 'NOT_FOUND'}), 404
 
         # Step 2 — fetch scheme data + stats in parallel
-        import concurrent.futures
         def fetch_scheme():
-            return session.get(f'https://groww.in/v1/api/data/mf/web/v6/scheme/search/{search_id}', timeout=10)
+            return cffi_requests.get(
+                f'https://groww.in/v1/api/data/mf/web/v6/scheme/search/{search_id}',
+                headers=GROWW_HEADERS, impersonate='chrome120', timeout=10
+            )
         def fetch_stats():
-            return session.get(f'https://groww.in/v1/api/data/mf/web/v1/scheme/portfolio/{scheme_code}/stats', timeout=10)
+            return cffi_requests.get(
+                f'https://groww.in/v1/api/data/mf/web/v1/scheme/portfolio/{scheme_code}/stats',
+                headers=GROWW_HEADERS, impersonate='chrome120', timeout=10
+            )
 
-        with concurrent.futures.ThreadPoolExecutor() as ex:
+        with ThreadPoolExecutor() as ex:
             f2, f3 = ex.submit(fetch_scheme), ex.submit(fetch_stats)
             r2, r3 = f2.result(), f3.result()
 
@@ -123,7 +120,7 @@ def groww():
         rs = d.get('return_stats', [{}])
         rs = rs[0] if isinstance(rs, list) else rs
 
-        all_holdings   = d.get('holdings', [])
+        all_holdings    = d.get('holdings', [])
         equity_holdings = [{'company': h['company_name'], 'sector': h['sector_name'], 'corpus_per': h['corpus_per'], 'market_value': h['market_value']} for h in all_holdings if h.get('nature_name') == 'EQUITY']
         debt_holdings   = [{'company': h['company_name'], 'nature': h['nature_name'], 'sector': h['sector_name'], 'corpus_per': h['corpus_per'], 'rating': h.get('rating')} for h in all_holdings if h.get('nature_name') != 'EQUITY']
 
@@ -150,3 +147,10 @@ def groww():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/ping')
+def ping():
+    return 'ok', 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
